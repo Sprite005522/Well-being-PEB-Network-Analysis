@@ -254,72 +254,74 @@ grid.arrange(p_raw, p_z, nrow = 1)
 # 6. Figure 3: Gender Difference Network Analysis
 # ==============================================================================
 
-# 6.0 Extract gender information and split samples
+# 6.0 Data Alignment (FIXED: Join gender BEFORE removing missing values)
+# Create a temporary dataframe that includes Gender to ensure rows stay aligned
+data_temp <- data.frame(
+  CB  = rowMeans(data_raw[, grep("PEBS_Conservation", colnames(data_raw))], na.rm = TRUE),
+  EC  = rowMeans(data_raw[, grep("PEBS_Environmental_citizenship", colnames(data_raw))], na.rm = TRUE),
+  SFC = rowMeans(data_raw[, grep("PEBS_Food", colnames(data_raw))], na.rm = TRUE),
+  Tra = rowMeans(data_raw[, grep("PEBS_Tmnsporation", colnames(data_raw))], na.rm = TRUE),  
+  EWB = rowMeans(data_raw[, grep("Mental_Health_Continuum_EWB", colnames(data_raw))], na.rm = TRUE),
+  SWB = rowMeans(data_raw[, grep("Mental_Health_Continuum_SWB", colnames(data_raw))], na.rm = TRUE),
+  PWB = rowMeans(data_raw[, grep("Mental_Health_Continuum_PWB", colnames(data_raw))], na.rm = TRUE),
+  Gender = data_raw$Gender # <--- Join here
+)
 
-data$Gender <- factor(ifelse(data_raw$Gender == 1, "Men", "Women"), levels = c("Women", "Men"))
-df_m <- data[data$Gender == "Men", 1:7]   # 男性样本 (n = 864)
-df_f <- data[data$Gender == "Women", 1:7] # 女性样本 (n = 2066)
+# Now remove rows with missing values - Gender stays with the correct row!
+data_clean <- na.omit(data_temp)
 
-cat("样本量：男性 =", nrow(df_m), "，女性 =", nrow(df_f), "\n")
+# Split samples using the correctly aligned Gender column
+df_m <- data_clean[data_clean$Gender == 1, 1:7] # Male
+df_f <- data_clean[data_clean$Gender == 2, 1:7] # Female
+
+cat("Correct Sample Sizes: Men =", nrow(df_m), ", Women =", nrow(df_f), "\n")
 
 # 6.1 Estimating gender-specific networks
 NET_m <- estimateNetwork(df_m, default = "EBICglasso", lambda.min.ratio = 0.001)
 NET_f <- estimateNetwork(df_f, default = "EBICglasso", lambda.min.ratio = 0.001)
 
-fit_m <- mgm(as.matrix(df_m), type = rep("g", 7), level = rep(1,7), lambdaSel = "EBIC")
-fit_f <- mgm(as.matrix(df_f), type = rep("g", 7), level = rep(1,7), lambdaSel = "EBIC")
+fit_m <- mgm(as.matrix(df_m), type = rep("g", 7), level = rep(1, 7), lambdaSel = "EBIC")
+fit_f <- mgm(as.matrix(df_f), type = rep("g", 7), level = rep(1, 7), lambdaSel = "EBIC")
 
 pred_m <- predict(fit_m, df_m, errorCon = "R2")
 pred_f <- predict(fit_f, df_f, errorCon = "R2")
 
-
 avg_layout_gender <- averageLayout(list(NET_m$graph, NET_f$graph))
 
-
-edge_col_m <- matrix("black", 7, 7); edge_col_f <- matrix("black", 7, 7)
-edge_col_m[NET_m$graph > 0] <- "blue"; edge_col_m[NET_m$graph < 0] <- "red"
-edge_col_f[NET_f$graph > 0] <- "blue"; edge_col_f[NET_f$graph < 0] <- "red"
-node_pie_colors_gender <- c(rep(colors[1], 4), rep(colors[2], 3))
-
-# --------------------------
-# Figure 3a: Male sub-sample network
-# --------------------------
-plot(NET_m, layout = avg_layout_gender, groups = col_list, nodeNames = longnames, color = colors,
-     pie = pred_m$error$R2, pieColor = node_pie_colors_gender,
-     negDashed = TRUE, borders = TRUE, legend = FALSE, threshold = 0, label.cex = 1.2,
-     edge.color = edge_col_m, main = paste0("Figure 3a: Male subsample (n = ", nrow(df_m), ")"))
-
-# --------------------------
-# Figure 3b: Female sub-sample network
-# --------------------------
-plot(NET_f, layout = avg_layout_gender, groups = col_list, nodeNames = longnames, color = colors,
-     pie = pred_f$error$R2, pieColor = node_pie_colors_gender,
-     negDashed = TRUE, borders = TRUE, legend = FALSE, threshold = 0, label.cex = 1.2,
-     edge.color = edge_col_f, main = paste0("Figure 3b: Female subsample (n = ", nrow(df_f), ")"))
-
-# --------------------------
+# ------------------------------------------------------------------------------
 # Figure 3c & 3d: Network Comparison Test (NCT)
-# --------------------------
+# ------------------------------------------------------------------------------
+
+
+library(NetworkComparisonTest)
+
+# 1. Execute NCT Calculation
+# We use 1,000 permutations to estimate the null distribution for the test statistics. [cite: 94, 95]
 set.seed(123)
 nct_gender <- NCT(
-  data1 = df_f,
-  data2 = df_m,
-  it = 1000,
-  binary.data = FALSE,
-  test.edges = FALSE,
-  edges = "all",
+  data1 = df_f,                
+  data2 = df_m,                
+  it = 1000,                   
+  binary.data = FALSE,         
+  test.edges = FALSE,          
   progressbar = TRUE
 )
 
-
-cat("\n=== Figure 3c & 3d 核心结果 ===\n")
+# 2. Statistical Summary
+# Review the observed M (Structure Invariance) and S (Global Strength) values along with p-values. [cite: 140]
 summary(nct_gender)
 
+# 3. Figure 3c: Global Strength Difference Distribution
+# Visualizes the permutation distribution of the difference in overall connectivity (Global Strength). [cite: 140, 402]
+plot(nct_gender, 
+     what = "strength", 
+     main = "Figure 3c: Global Strength Difference by Gender")
 
-plot(nct_gender, what = "strength", main = "Figure 3c: Permutation distribution of global strength difference")
-
-
-plot(nct_gender, what = "network", main = "Figure 3d: Network structure invariance test")
+# 4. Figure 3d: Network Structure Invariance Test
+# Visualizes the permutation distribution of the maximum edge weight difference (M). [cite: 402, 403]
+plot(nct_gender, 
+     what = "network", 
+     main = "Figure 3d: Network Structure Difference by Gender")
 
 
 
